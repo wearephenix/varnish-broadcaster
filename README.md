@@ -1,5 +1,5 @@
 # Request distributor
-Broadcasts requests to multiple Varnish caches from a single entry point.
+Broadcasts requests to multiple [Varnish](<https://www.varnish-cache.org/>) caches from a single entry point.
 
 The initial thought is to ease-up purging/banning across multiple [Varnish](<https://www.varnish-cache.org/>) cache instances.
 
