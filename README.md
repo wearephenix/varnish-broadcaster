@@ -1,8 +1,6 @@
 # Request distributor
 Broadcasts requests to multiple [Varnish](<https://www.varnish-cache.org/>) caches from a single entry point.
-
 The initial thought is to ease-up purging/banning across multiple [Varnish](<https://www.varnish-cache.org/>) cache instances.
-
 The broadcaster consists out of a web-server which will handle the distribution of requests against all configured caches.
 
 See this [file](caches.json) as an example on how to configure your caches.
