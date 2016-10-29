@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mariusmagureanu/purger/broadcaster"
-	"github.com/mariusmagureanu/purger/dao"
+	"github.com/mariusmagureanu/broadcaster/broadcaster"
+	"github.com/mariusmagureanu/broadcaster/dao"
 )
 
 const (
@@ -176,14 +176,12 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
 
 	err = setUpCaches()
-
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 
 	err = resolveCacheTcpAddresses()
-
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
@@ -197,7 +195,6 @@ func main() {
 	if err := commandLine.Parse(os.Args[1:]); err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
-
 	}
 
 	startBroadcastServer()
