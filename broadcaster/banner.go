@@ -3,7 +3,7 @@ package broadcasters
 import "io"
 import (
 	"bytes"
-	"github.com/mariusmagureanu/purger/dao"
+	"github.com/mariusmagureanu/broadcaster/dao"
 )
 
 type Banner struct {

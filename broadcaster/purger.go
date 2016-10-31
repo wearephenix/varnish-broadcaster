@@ -1,10 +1,11 @@
 package broadcasters
 
-import "io"
+
 import (
 	"bytes"
-	"github.com/mariusmagureanu/purger/dao"
+	"github.com/mariusmagureanu/broadcaster/dao"
 	"fmt"
+	"io"
 )
 
 type Purger struct {
