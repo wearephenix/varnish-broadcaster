@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 
+	"bufio"
 	"github.com/mariusmagureanu/broadcaster/broadcaster"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
@@ -32,15 +32,19 @@ var (
 
 	commandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port        = commandLine.Int("port", 8088, "Broadcaster port.")
-	grCount     = commandLine.Int("goroutines", 3, "Goroutines number. Higher is not implicitly better!")
+	grCount     = commandLine.Int("goroutines", 2, "Goroutines number. Higher is not implicitly better!")
 )
 
 func doRequest(cache dao.Cache) ([]byte, error) {
 
-	var reqBuffer = bytes.Buffer{}
+	var (
+		reqBuffer = bytes.Buffer{}
+		coonPool  = pools[cache.Address]
+	)
 
-	tcpConnection, err := pools[cache.Address].Get()
+	tcpConnection, err := coonPool.Get()
 	if err != nil {
+		coonPool.Close()
 		return nil, err
 	}
 	defer tcpConnection.Close()
@@ -54,7 +58,11 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 
 	purgeReq := reqBuffer.String()
 
-	tcpConnection.Write([]byte(purgeReq))
+	_, err = tcpConnection.Write([]byte(purgeReq))
+	if err != nil {
+		coonPool.Close()
+		return nil, err
+	}
 
 	var reader = bufio.NewReader(tcpConnection)
 	return reader.Peek(12)
@@ -111,14 +119,14 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, bc := range broadcastCaches {
-		runtime.Gosched()
 		bc.Method = r.Method
 		bc.Item = r.URL.Path
 		jobs <- bc
 	}
 
 	for _, ch := range broadcastCaches {
-		buffer.WriteString(ch.Name + ": ")
+		buffer.WriteString(ch.Name)
+		buffer.WriteString(": ")
 		buffer.Write(<-results)
 		buffer.WriteRune('\n')
 	}
@@ -182,7 +190,7 @@ func warmUpConnections() error {
 			return tcpConn, err
 		}
 
-		p, err := pool.NewChannelPool(25, 100, factory)
+		p, err := pool.NewChannelPool(50, 200, factory)
 
 		if err != nil {
 			return err
