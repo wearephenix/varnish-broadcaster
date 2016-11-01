@@ -11,21 +11,14 @@ import (
 	"strconv"
 
 	"bufio"
-	"github.com/mariusmagureanu/broadcaster/broadcaster"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
 	"time"
 )
 
-const (
-	PURGE_METHOD = "PURGE"
-	BAN_METHOD   = "BAN"
-)
-
 var (
 	allCaches []dao.Cache
 
-	runners   = make(map[string]broadcasters.Broadcaster)
 	addresses = make(map[string]*net.TCPAddr)
 	groups    = make(map[string]dao.Group)
 	pools     = make(map[string]pool.Pool)
@@ -124,6 +117,8 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		jobs <- bc
 	}
 
+	close(jobs)
+
 	for _, ch := range broadcastCaches {
 		buffer.WriteString(ch.Name)
 		buffer.WriteString(": ")
@@ -131,17 +126,12 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		buffer.WriteRune('\n')
 	}
 
-	close(jobs)
 	close(results)
 
 	fmt.Fprint(w, buffer.String())
 }
 
 func startBroadcastServer() {
-
-	runners[BAN_METHOD] = broadcasters.Banner{}
-	runners[PURGE_METHOD] = broadcasters.Purger{}
-
 	http.HandleFunc("/", reqHandler)
 
 	fmt.Fprintf(os.Stdout, "Starting to serve on %s...", strconv.Itoa(*port))
