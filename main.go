@@ -117,7 +117,8 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		jobs <- bc
 	}
 
-	for range broadcastCaches {
+	for _, ch := range broadcastCaches {
+		buffer.WriteString(ch.Name + ": ")
 		buffer.Write(<-results)
 		buffer.WriteRune('\n')
 	}
@@ -173,7 +174,9 @@ func warmUpConnections() error {
 
 		factory := func() (net.Conn, error) {
 			tcpConn, err := net.DialTCP("tcp", nil, cacheTcpAddress)
-
+			if err != nil {
+				return nil, err
+			}
 			tcpConn.SetKeepAlive(true)
 			tcpConn.SetKeepAlivePeriod(1 * time.Minute)
 			return tcpConn, err
