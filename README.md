@@ -38,10 +38,10 @@ Date: Sat, 29 Oct 2016 15:20:19 GMT
 Content-Length: 28
 Content-Type: text/plain; charset=utf-8
 
-HTTP/1.1 200
-HTTP/1.1 200
-HTTP/1.0 405
-HTTP/1.0 501
+Cache#1: HTTP/1.1 200
+Cache#3: HTTP/1.1 200
+Cache#4: HTTP/1.1 200
+Cache#2: HTTP/1.0 501
 ```
 
 Note that your VCL needs to be aware of your purging/banning intentions. See [here](https://www.varnish-cache.org/docs/trunk/users-guide/purging.html) for more cache invalidation details.
