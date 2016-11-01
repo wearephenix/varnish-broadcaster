@@ -10,10 +10,11 @@ import (
 	"os"
 	"runtime"
 	"strconv"
-	"time"
 
 	"github.com/mariusmagureanu/broadcaster/broadcaster"
 	"github.com/mariusmagureanu/broadcaster/dao"
+	"github.com/mariusmagureanu/broadcaster/pool"
+	"time"
 )
 
 const (
@@ -22,29 +23,27 @@ const (
 )
 
 var (
+	allCaches []dao.Cache
+
 	runners   = make(map[string]broadcasters.Broadcaster)
 	addresses = make(map[string]*net.TCPAddr)
 	groups    = make(map[string]dao.Group)
-	allCaches []dao.Cache
+	pools     = make(map[string]pool.Pool)
 
 	commandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port        = commandLine.Int("port", 8088, "Broadcaster port.")
-	grCount     = commandLine.Int("goroutines", 2, "Goroutines number. Higher is not implicitly better!")
+	grCount     = commandLine.Int("goroutines", 3, "Goroutines number. Higher is not implicitly better!")
 )
 
 func doRequest(cache dao.Cache) ([]byte, error) {
 
 	var reqBuffer = bytes.Buffer{}
 
-	cacheTcpAddress := addresses[cache.Address]
-
-	tcpConnection, err := net.DialTCP("tcp4", nil, cacheTcpAddress)
+	tcpConnection, err := pools[cache.Address].Get()
 	if err != nil {
 		return nil, err
 	}
-
 	defer tcpConnection.Close()
-	tcpConnection.SetKeepAlive(true)
 
 	reqBuffer.WriteString(cache.Method)
 	reqBuffer.WriteRune(' ')
@@ -55,14 +54,10 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 
 	purgeReq := reqBuffer.String()
 
-	tcpConnection.SetWriteBuffer(len(purgeReq))
 	tcpConnection.Write([]byte(purgeReq))
 
-	tcpConnection.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	tcpConnection.SetReadBuffer(13)
-
 	var reader = bufio.NewReader(tcpConnection)
-	return reader.Peek(13)
+	return reader.Peek(12)
 }
 
 func worker(jobs <-chan dao.Cache, results chan<- []byte) {
@@ -108,8 +103,8 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs := make(chan dao.Cache, cacheCount)
-	results := make(chan []byte, cacheCount)
+	jobs := make(chan dao.Cache, cacheCount+1)
+	results := make(chan []byte, cacheCount+1)
 
 	for i := 0; i < (*grCount); i++ {
 		go worker(jobs, results)
@@ -121,6 +116,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		bc.Item = r.URL.Path
 		jobs <- bc
 	}
+
 	for range broadcastCaches {
 		buffer.Write(<-results)
 		buffer.WriteRune('\n')
@@ -170,6 +166,31 @@ func resolveCacheTcpAddresses() error {
 	return err
 }
 
+func warmUpConnections() error {
+
+	for _, cache := range allCaches {
+		cacheTcpAddress := addresses[cache.Address]
+
+		factory := func() (net.Conn, error) {
+			tcpConn, err := net.DialTCP("tcp", nil, cacheTcpAddress)
+
+			tcpConn.SetKeepAlive(true)
+			tcpConn.SetKeepAlivePeriod(1 * time.Minute)
+			return tcpConn, err
+		}
+
+		p, err := pool.NewChannelPool(25, 100, factory)
+
+		if err != nil {
+			return err
+		}
+
+		pools[cache.Address] = p
+
+	}
+	return nil
+}
+
 func main() {
 	var err error
 
@@ -182,6 +203,12 @@ func main() {
 	}
 
 	err = resolveCacheTcpAddresses()
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
+	err = warmUpConnections()
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
