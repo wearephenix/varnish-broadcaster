@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"github.com/go-ini/ini"
 	"io/ioutil"
+	"net/http"
 	"os"
 )
 
 type Cache struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
-	Method  string `json:"-"`
-	Item    string `json:"-"`
+	Name    string      `json:"name"`
+	Address string      `json:"address"`
+	Method  string      `json:"-"`
+	Item    string      `json:"-"`
+	Headers http.Header `json:"-"`
 }
 
 type Group struct {
@@ -19,7 +21,7 @@ type Group struct {
 	Caches []Cache `json:"caches"`
 }
 
-func LoadCaches(configPath string) ([]Group, error) {
+func LoadCachesFromJson(configPath string) ([]Group, error) {
 	var groups []Group
 
 	_, err := os.Stat(configPath)
@@ -56,7 +58,7 @@ func LoadCachesFromIni(configPath string) ([]Group, error) {
 			g.Caches = append(g.Caches, c)
 
 		}
-
+		g.Name = s.Name()
 		groups = append(groups, g)
 	}
 

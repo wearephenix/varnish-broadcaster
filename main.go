@@ -1,19 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/mariusmagureanu/broadcaster/dao"
+	"github.com/mariusmagureanu/broadcaster/pool"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"runtime"
 	"strconv"
-
-	"bufio"
-	"github.com/mariusmagureanu/broadcaster/dao"
-	"github.com/mariusmagureanu/broadcaster/pool"
+	"strings"
 	"time"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var (
@@ -28,37 +30,67 @@ var (
 	grCount     = commandLine.Int("goroutines", 2, "Goroutines number. Higher is not implicitly better!")
 )
 
-func doRequest(cache dao.Cache) ([]byte, error) {
-
-	var (
-		reqBuffer = bytes.Buffer{}
-		coonPool  = pools[cache.Address]
-	)
-
-	tcpConnection, err := coonPool.Get()
-	if err != nil {
-		coonPool.Close()
-		return nil, err
-	}
-	defer tcpConnection.Close()
+func getRequestString(cache dao.Cache) string {
+	var reqBuffer = bytes.Buffer{}
 
 	reqBuffer.WriteString(cache.Method)
 	reqBuffer.WriteRune(' ')
 	reqBuffer.WriteString(cache.Item)
 	reqBuffer.WriteString(" HTTP/1.1\r\nHost: ")
 	reqBuffer.WriteString(cache.Address)
-	reqBuffer.WriteString("\n\n")
+	reqBuffer.WriteString("\n")
 
-	purgeReq := reqBuffer.String()
+	for k, v := range cache.Headers {
+		if strings.HasPrefix(k, "X-") {
+			reqBuffer.WriteString(k)
+			reqBuffer.WriteString(": ")
+			reqBuffer.WriteString(v[0])
+			reqBuffer.WriteString("\n")
+		}
+	}
+	reqBuffer.WriteString("\n")
 
+	return reqBuffer.String()
+}
+
+func doRequest(cache dao.Cache) ([]byte, error) {
+
+	var (
+		coonPool = pools[cache.Address]
+	)
+
+	if coonPool == nil {
+		return nil, errors.New("No pools for " + cache.Name)
+	}
+
+	tcpConnection, err := coonPool.Get()
+	if err != nil {
+		coonPool.Close()
+		return nil, err
+	}
+
+	defer tcpConnection.Close()
+
+	purgeReq := getRequestString(cache)
 	_, err = tcpConnection.Write([]byte(purgeReq))
+
 	if err != nil {
 		coonPool.Close()
 		return nil, err
 	}
 
 	var reader = bufio.NewReader(tcpConnection)
-	return reader.Peek(12)
+	out, err := reader.Peek(12)
+
+	if err == io.EOF {
+		coonPool.Close()
+		warmUpConnections(cache)
+
+		//TODO: dangerous line here, may run into an infinite loop
+		return doRequest(cache)
+	}
+
+	return out, nil
 }
 
 func worker(jobs <-chan dao.Cache, results chan<- []byte) {
@@ -114,6 +146,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	for _, bc := range broadcastCaches {
 		bc.Method = r.Method
 		bc.Item = r.URL.Path
+		bc.Headers = r.Header
 		jobs <- bc
 	}
 
@@ -134,7 +167,8 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 func startBroadcastServer() {
 	http.HandleFunc("/", reqHandler)
 
-	fmt.Fprintf(os.Stdout, "Starting to serve on %s...", strconv.Itoa(*port))
+	fmt.Println()
+	fmt.Fprintf(os.Stdout, "Starting the broadcaster on %s...", strconv.Itoa(*port))
 	fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
@@ -165,30 +199,28 @@ func resolveCacheTcpAddresses() error {
 	return err
 }
 
-func warmUpConnections() error {
+func warmUpConnections(cache dao.Cache) error {
 
-	for _, cache := range allCaches {
-		cacheTcpAddress := addresses[cache.Address]
+	cacheTcpAddress := addresses[cache.Address]
 
-		factory := func() (net.Conn, error) {
-			tcpConn, err := net.DialTCP("tcp", nil, cacheTcpAddress)
-			if err != nil {
-				return nil, err
-			}
-			tcpConn.SetKeepAlive(true)
-			tcpConn.SetKeepAlivePeriod(1 * time.Minute)
-			return tcpConn, err
-		}
-
-		p, err := pool.NewChannelPool(50, 200, factory)
-
+	factory := func() (net.Conn, error) {
+		tcpConn, err := net.DialTCP("tcp", nil, cacheTcpAddress)
 		if err != nil {
-			return err
+			return nil, err
 		}
-
-		pools[cache.Address] = p
-
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(1 * time.Minute)
+		return tcpConn, err
 	}
+
+	p, err := pool.NewChannelPool(50, 200, factory)
+
+	if err != nil {
+		return err
+	}
+
+	pools[cache.Address] = p
+
 	return nil
 }
 
@@ -209,10 +241,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = warmUpConnections()
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+	for _, cache := range allCaches {
+		err = warmUpConnections(cache)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "*Cache [%s] encountered an error when warming up connections.\n %s\n", cache.Name, err.Error())
+		}
 	}
 
 	commandLine.Usage = func() {
