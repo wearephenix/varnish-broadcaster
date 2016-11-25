@@ -7,7 +7,7 @@ See [this](caches.json) file as an example on how to configure your caches.
 
 Start the app with any of the following command line args:
 
-  - **port**: The port under which the broadcaster is exposed. Defaults to **8080**
+  - **port**: The port under which the broadcaster is exposed. Defaults to **8088**
   - **goroutines**: Sets the number of available goroutines which will handle the broadcast against the caches. Defaults to a number of **2**, a higher number does not necesarilly imply a better performance. Can be tweaked though depending on the number of caches.
   
 Required headers:
