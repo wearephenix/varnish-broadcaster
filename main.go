@@ -139,7 +139,7 @@ func startBroadcastServer() {
 }
 
 func setUpCaches() error {
-	groupList, err := dao.LoadCaches("./caches.json")
+	groupList, err := dao.LoadCachesFromIni("./caches.ini")
 
 	for _, g := range groupList {
 		groups[g.Name] = g

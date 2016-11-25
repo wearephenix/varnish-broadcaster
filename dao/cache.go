@@ -2,6 +2,7 @@ package dao
 
 import (
 	"encoding/json"
+	"github.com/go-ini/ini"
 	"io/ioutil"
 	"os"
 )
@@ -34,4 +35,30 @@ func LoadCaches(configPath string) ([]Group, error) {
 	err = json.Unmarshal(fileContent, &groups)
 
 	return groups, err
+}
+
+func LoadCachesFromIni(configPath string) ([]Group, error) {
+	var groups []Group
+	cfg, err := ini.Load(configPath)
+
+	if err != nil {
+		return groups, err
+	}
+
+	for _, s := range cfg.Sections() {
+
+		var g Group
+
+		for _, k := range s.Keys() {
+			var c Cache
+			c.Name = k.Name()
+			c.Address = k.Value()
+			g.Caches = append(g.Caches, c)
+
+		}
+
+		groups = append(groups, g)
+	}
+
+	return groups, nil
 }
