@@ -3,7 +3,7 @@ Broadcasts requests to multiple [Varnish](<https://www.varnish-cache.org/>) cach
 The initial thought is to ease-up purging/banning across multiple [Varnish](<https://www.varnish-cache.org/>) cache instances.
 The broadcaster consists out of a web-server which will handle the distribution of requests against all configured caches.
 
-See [this](caches.json) file as an example on how to configure your caches.
+See [this](caches.ini) file as an example on how to configure your caches.
 
 Start the app with any of the following command line args:
 
@@ -18,17 +18,17 @@ Usage example:
 
 Purge **/something/to/purge** in all caches within the Production group:
 ```
-curl -Is http://localhost:8088/something/to/purge -H "X-Group: Production"  -X PURGE
+curl -is http://localhost:8088/something/to/purge -H "X-Group: Production"  -X PURGE
 ```
 
 Ban **/foo** in all caches within the Dev group:
 ```
-curl -Is http://localhost:8088/foo -H "X-Group: Dev"  -X BAN
+curl -is http://localhost:8088/foo -H "X-Group: Dev"  -X BAN
 ```
 
 Purge everything in all your caches:
 ```
-curl -Is http://localhost:8088/ -H "X-Group: all"  -X PURGE
+curl -is http://localhost:8088/ -H "X-Group: all"  -X PURGE
 ```
 
 Response example:
