@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"github.com/syndtr/goleveldb/leveldb/errors"
+	"errors"
 )
 
 var (

@@ -2,10 +2,10 @@ package dao
 
 import (
 	"encoding/json"
-	"github.com/go-ini/ini"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"github.com/mariusmagureanu/broadcaster/ini"
 )
 
 type Cache struct {
