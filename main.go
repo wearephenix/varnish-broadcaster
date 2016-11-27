@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"errors"
 )
 
 var (
@@ -28,6 +27,7 @@ var (
 	commandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port        = commandLine.Int("port", 8088, "Broadcaster port.")
 	grCount     = commandLine.Int("goroutines", 2, "Goroutines number. Higher is not implicitly better!")
+	reqRetries  = commandLine.Int("retries", 1, "Request retry times if first time fails.")
 )
 
 func getRequestString(cache dao.Cache) string {
@@ -40,6 +40,7 @@ func getRequestString(cache dao.Cache) string {
 	reqBuffer.WriteString(cache.Address)
 	reqBuffer.WriteString("\n")
 
+	reqBuffer.WriteString("Keep-Alive: timeout=180, max=100\n")
 	for k, v := range cache.Headers {
 		if strings.HasPrefix(k, "X-") {
 			reqBuffer.WriteString(k)
@@ -82,12 +83,9 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	var reader = bufio.NewReader(tcpConnection)
 	out, err := reader.Peek(12)
 
-	if err == io.EOF {
+	if err != nil {
 		coonPool.Close()
-		warmUpConnections(cache)
-
-		//TODO: dangerous line here, may run into an infinite loop
-		return doRequest(cache)
+		return nil, err
 	}
 
 	return out, nil
@@ -95,7 +93,18 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 
 func worker(jobs <-chan dao.Cache, results chan<- []byte) {
 	for j := range jobs {
-		out, err := doRequest(j)
+		var out []byte
+		var err error
+
+		for i := 0; i <= *reqRetries; i++ {
+			out, err = doRequest(j)
+			if err == nil {
+				break
+			} else {
+				warmUpConnections(j)
+			}
+		}
+
 		if err != nil {
 			results <- []byte(err.Error())
 			continue
