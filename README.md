@@ -18,12 +18,12 @@ Usage example:
 
 Purge **/something/to/purge** in all caches within the ``[default]`` group:
 ```
-curl -is http://localhost:8088/something/to/purge -H "X-Group: Production"  -X PURGE
+curl -is http://localhost:8088/something/to/purge -H "X-Group: default"  -X PURGE
 ```
 
 Ban **/foo** in all caches within the ``[prod]`` group:
 ```
-curl -is http://localhost:8088/foo -H "X-Group: Dev"  -X BAN
+curl -is http://localhost:8088/foo -H "X-Group: prod"  -X BAN
 ```
 
 Purge everything in all your caches:
