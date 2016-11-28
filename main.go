@@ -14,10 +14,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 var (
+	locker    sync.RWMutex
 	allCaches []dao.Cache
 
 	addresses = make(map[string]*net.TCPAddr)
@@ -40,7 +42,7 @@ func getRequestString(cache dao.Cache) string {
 	reqBuffer.WriteString(cache.Address)
 	reqBuffer.WriteString("\n")
 
-	reqBuffer.WriteString("Keep-Alive: timeout=180, max=100\n")
+	reqBuffer.WriteString("Keep-Alive: timeout=180, max=180\n")
 	for k, v := range cache.Headers {
 		if strings.HasPrefix(k, "X-") {
 			reqBuffer.WriteString(k)
@@ -56,17 +58,17 @@ func getRequestString(cache dao.Cache) string {
 
 func doRequest(cache dao.Cache) ([]byte, error) {
 
-	var (
-		coonPool = pools[cache.Address]
-	)
+	locker.Lock()
+	var connPool = pools[cache.Address]
+	locker.Unlock()
 
-	if coonPool == nil {
+	if connPool == nil {
 		return nil, errors.New("No pools for " + cache.Name)
 	}
 
-	tcpConnection, err := coonPool.Get()
+	tcpConnection, err := connPool.Get()
 	if err != nil {
-		coonPool.Close()
+		connPool.Close()
 		return nil, err
 	}
 
@@ -76,7 +78,7 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	_, err = tcpConnection.Write([]byte(purgeReq))
 
 	if err != nil {
-		coonPool.Close()
+		connPool.Close()
 		return nil, err
 	}
 
@@ -84,7 +86,7 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	out, err := reader.Peek(12)
 
 	if err != nil {
-		coonPool.Close()
+		connPool.Close()
 		return nil, err
 	}
 
@@ -101,7 +103,10 @@ func worker(jobs <-chan dao.Cache, results chan<- []byte) {
 			if err == nil {
 				break
 			} else {
-				warmUpConnections(j)
+				err = warmUpConnections(j)
+				if err != nil {
+					break
+				}
 			}
 		}
 
@@ -177,7 +182,7 @@ func startBroadcastServer() {
 	http.HandleFunc("/", reqHandler)
 
 	fmt.Println()
-	fmt.Fprintf(os.Stdout, "Starting the broadcaster on %s...", strconv.Itoa(*port))
+	fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...", strconv.Itoa(*port))
 	fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
@@ -210,6 +215,9 @@ func resolveCacheTcpAddresses() error {
 
 func warmUpConnections(cache dao.Cache) error {
 
+	locker.Lock()
+	defer locker.Unlock()
+
 	cacheTcpAddress := addresses[cache.Address]
 
 	factory := func() (net.Conn, error) {
@@ -222,7 +230,7 @@ func warmUpConnections(cache dao.Cache) error {
 		return tcpConn, err
 	}
 
-	p, err := pool.NewChannelPool(50, 200, factory)
+	p, err := pool.NewChannelPool(20, 200, factory)
 
 	if err != nil {
 		return err
@@ -235,6 +243,16 @@ func warmUpConnections(cache dao.Cache) error {
 
 func main() {
 	var err error
+
+	commandLine.Usage = func() {
+		fmt.Fprint(os.Stdout, "Usage of the broadcaster:\n")
+		commandLine.PrintDefaults()
+	}
+
+	if err := commandLine.Parse(os.Args[1:]); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
 
@@ -253,18 +271,8 @@ func main() {
 	for _, cache := range allCaches {
 		err = warmUpConnections(cache)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "*Cache [%s] encountered an error when warming up connections.\n %s\n", cache.Name, err.Error())
+			fmt.Fprintf(os.Stderr, "* Cache [%s] encountered an error when warming up connections.\n    - %s\n", cache.Name, err.Error())
 		}
-	}
-
-	commandLine.Usage = func() {
-		fmt.Fprint(os.Stdout, "Usage of the broadcaster:\n")
-		commandLine.PrintDefaults()
-	}
-
-	if err := commandLine.Parse(os.Args[1:]); err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
 	}
 
 	startBroadcastServer()
