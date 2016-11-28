@@ -16,12 +16,12 @@ Required headers:
    
 Usage example:
 
-Purge **/something/to/purge** in all caches within the Production group:
+Purge **/something/to/purge** in all caches within the ``[default]`` group:
 ```
 curl -is http://localhost:8088/something/to/purge -H "X-Group: Production"  -X PURGE
 ```
 
-Ban **/foo** in all caches within the Dev group:
+Ban **/foo** in all caches within the ``[prod]`` group:
 ```
 curl -is http://localhost:8088/foo -H "X-Group: Dev"  -X BAN
 ```
