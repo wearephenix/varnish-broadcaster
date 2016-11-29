@@ -6,8 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/mariusmagureanu/broadcaster/dao"
-	"github.com/mariusmagureanu/broadcaster/pool"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mariusmagureanu/broadcaster/dao"
+	"github.com/mariusmagureanu/broadcaster/pool"
 )
 
 var (
@@ -42,7 +43,6 @@ func getRequestString(cache dao.Cache) string {
 	reqBuffer.WriteString(cache.Address)
 	reqBuffer.WriteString("\n")
 
-	reqBuffer.WriteString("Keep-Alive: timeout=180, max=180\n")
 	for k, v := range cache.Headers {
 		if strings.HasPrefix(k, "X-") {
 			reqBuffer.WriteString(k)
@@ -59,7 +59,7 @@ func getRequestString(cache dao.Cache) string {
 func doRequest(cache dao.Cache) ([]byte, error) {
 
 	locker.Lock()
-	var connPool = pools[cache.Address]
+	var connPool = pools[cache.Name]
 	locker.Unlock()
 
 	if connPool == nil {
@@ -67,7 +67,9 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	}
 
 	tcpConnection, err := connPool.Get()
+
 	if err != nil {
+
 		connPool.Close()
 		return nil, err
 	}
@@ -81,15 +83,13 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 		connPool.Close()
 		return nil, err
 	}
-
 	var reader = bufio.NewReader(tcpConnection)
-	out, err := reader.Peek(12)
+	out, err := reader.ReadBytes('\n')
 
 	if err != nil {
 		connPool.Close()
 		return nil, err
 	}
-
 	return out, nil
 }
 
@@ -150,8 +150,8 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs := make(chan dao.Cache, cacheCount+1)
-	results := make(chan []byte, cacheCount+1)
+	jobs := make(chan dao.Cache, cacheCount)
+	results := make(chan []byte, cacheCount)
 
 	for i := 0; i < (*grCount); i++ {
 		go worker(jobs, results)
@@ -170,11 +170,9 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		buffer.WriteString(ch.Name)
 		buffer.WriteString(": ")
 		buffer.Write(<-results)
-		buffer.WriteRune('\n')
 	}
 
 	close(results)
-
 	fmt.Fprint(w, buffer.String())
 }
 
@@ -182,7 +180,7 @@ func startBroadcastServer() {
 	http.HandleFunc("/", reqHandler)
 
 	fmt.Println()
-	fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...", strconv.Itoa(*port))
+	fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...\n", strconv.Itoa(*port))
 	fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
@@ -206,7 +204,7 @@ func resolveCacheTcpAddresses() error {
 				return err
 			}
 
-			addresses[cache.Address] = cacheTcpAddress
+			addresses[cache.Name] = cacheTcpAddress
 			allCaches = append(allCaches, cache)
 		}
 	}
@@ -218,7 +216,7 @@ func warmUpConnections(cache dao.Cache) error {
 	locker.Lock()
 	defer locker.Unlock()
 
-	cacheTcpAddress := addresses[cache.Address]
+	cacheTcpAddress := addresses[cache.Name]
 
 	factory := func() (net.Conn, error) {
 		tcpConn, err := net.DialTCP("tcp", nil, cacheTcpAddress)
@@ -230,13 +228,13 @@ func warmUpConnections(cache dao.Cache) error {
 		return tcpConn, err
 	}
 
-	p, err := pool.NewChannelPool(20, 200, factory)
+	p, err := pool.NewChannelPool(10, 40, factory)
 
 	if err != nil {
 		return err
 	}
 
-	pools[cache.Address] = p
+	pools[cache.Name] = p
 
 	return nil
 }
