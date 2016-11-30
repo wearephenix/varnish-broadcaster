@@ -3,6 +3,12 @@ Broadcasts requests to multiple [Varnish](<https://www.varnish-cache.org/>) cach
 The initial thought is to ease-up purging/banning across multiple [Varnish](<https://www.varnish-cache.org/>) cache instances.
 The broadcaster consists out of a web-server which will handle the distribution of requests against all configured caches.
 
+## Installation
+
+    go get -u github.com/mariusmagureanu/broadcaster
+
+## Usage 
+
 See [this](caches.ini) file as an example on how to configure your caches.
 
 Start the app with any of the following command line args:
