@@ -31,6 +31,7 @@ var (
 	port        = commandLine.Int("port", 8088, "Broadcaster port.")
 	grCount     = commandLine.Int("goroutines", 2, "Goroutines number. Higher is not implicitly better!")
 	reqRetries  = commandLine.Int("retries", 1, "Request retry times if first time fails.")
+	caches      = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
 )
 
 func getRequestString(cache dao.Cache) string {
@@ -173,19 +174,18 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	close(results)
+
 	fmt.Fprint(w, buffer.String())
 }
 
 func startBroadcastServer() {
 	http.HandleFunc("/", reqHandler)
-
-	fmt.Println()
 	fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...\n", strconv.Itoa(*port))
 	fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
 func setUpCaches() error {
-	groupList, err := dao.LoadCachesFromIni("./caches.ini")
+	groupList, err := dao.LoadCachesFromIni(*caches)
 
 	for _, g := range groupList {
 		groups[g.Name] = g
