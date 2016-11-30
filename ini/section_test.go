@@ -21,7 +21,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func Test_Section(t *testing.T) {
+func TestSection(t *testing.T) {
 	Convey("Test CRD sections", t, func() {
 		cfg, err := Load([]byte(_CONF_DATA), "testdata/conf.ini")
 		So(err, ShouldBeNil)

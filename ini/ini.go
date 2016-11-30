@@ -23,10 +23,8 @@ import (
 	"os"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
@@ -291,26 +289,6 @@ func (f *File) SectionStrings() []string {
 	return list
 }
 
-// DeleteSection deletes a section.
-func (f *File) DeleteSection(name string) {
-	if f.BlockMode {
-		f.lock.Lock()
-		defer f.lock.Unlock()
-	}
-
-	if len(name) == 0 {
-		name = DEFAULT_SECTION
-	}
-
-	for i, s := range f.sectionList {
-		if s == name {
-			f.sectionList = append(f.sectionList[:i], f.sectionList[i+1:]...)
-			delete(f.sections, name)
-			return
-		}
-	}
-}
-
 func (f *File) reload(s dataSource) error {
 	r, err := s.ReadCloser()
 	if err != nil {
@@ -351,151 +329,4 @@ func (f *File) Append(source interface{}, others ...interface{}) error {
 		f.dataSources = append(f.dataSources, ds)
 	}
 	return f.Reload()
-}
-
-// WriteToIndent writes content into io.Writer with given indention.
-// If PrettyFormat has been set to be true,
-// it will align "=" sign with spaces under each section.
-func (f *File) WriteToIndent(w io.Writer, indent string) (n int64, err error) {
-	equalSign := "="
-	if PrettyFormat {
-		equalSign = " = "
-	}
-
-	// Use buffer to make sure target is safe until finish encoding.
-	buf := bytes.NewBuffer(nil)
-	for i, sname := range f.sectionList {
-		sec := f.Section(sname)
-		if len(sec.Comment) > 0 {
-			if sec.Comment[0] != '#' && sec.Comment[0] != ';' {
-				sec.Comment = "; " + sec.Comment
-			}
-			if _, err = buf.WriteString(sec.Comment + LineBreak); err != nil {
-				return 0, err
-			}
-		}
-
-		if i > 0 || DefaultHeader {
-			if _, err = buf.WriteString("[" + sname + "]" + LineBreak); err != nil {
-				return 0, err
-			}
-		} else {
-			// Write nothing if default section is empty
-			if len(sec.keyList) == 0 {
-				continue
-			}
-		}
-
-		// Count and generate alignment length and buffer spaces using the
-		// longest key. Keys may be modifed if they contain certain characters so
-		// we need to take that into account in our calculation.
-		alignLength := 0
-		if PrettyFormat {
-			for _, kname := range sec.keyList {
-				keyLength := len(kname)
-				// First case will surround key by ` and second by """
-				if strings.ContainsAny(kname, "\"=:") {
-					keyLength += 2
-				} else if strings.Contains(kname, "`") {
-					keyLength += 6
-				}
-
-				if keyLength > alignLength {
-					alignLength = keyLength
-				}
-			}
-		}
-		alignSpaces := bytes.Repeat([]byte(" "), alignLength)
-
-		for _, kname := range sec.keyList {
-			key := sec.Key(kname)
-			if len(key.Comment) > 0 {
-				if len(indent) > 0 && sname != DEFAULT_SECTION {
-					buf.WriteString(indent)
-				}
-				if key.Comment[0] != '#' && key.Comment[0] != ';' {
-					key.Comment = "; " + key.Comment
-				}
-				if _, err = buf.WriteString(key.Comment + LineBreak); err != nil {
-					return 0, err
-				}
-			}
-
-			if len(indent) > 0 && sname != DEFAULT_SECTION {
-				buf.WriteString(indent)
-			}
-
-			switch {
-			case key.isAutoIncrement:
-				kname = "-"
-			case strings.ContainsAny(kname, "\"=:"):
-				kname = "`" + kname + "`"
-			case strings.Contains(kname, "`"):
-				kname = `"""` + kname + `"""`
-			}
-			if _, err = buf.WriteString(kname); err != nil {
-				return 0, err
-			}
-
-			if key.isBooleanType {
-				continue
-			}
-
-			// Write out alignment spaces before "=" sign
-			if PrettyFormat {
-				buf.Write(alignSpaces[:alignLength-len(kname)])
-			}
-
-			val := key.value
-			// In case key value contains "\n", "`", "\"", "#" or ";"
-			if strings.ContainsAny(val, "\n`") {
-				val = `"""` + val + `"""`
-			} else if strings.ContainsAny(val, "#;") {
-				val = "`" + val + "`"
-			}
-			if _, err = buf.WriteString(equalSign + val + LineBreak); err != nil {
-				return 0, err
-			}
-		}
-
-		// Put a line between sections
-		if _, err = buf.WriteString(LineBreak); err != nil {
-			return 0, err
-		}
-	}
-
-	return buf.WriteTo(w)
-}
-
-// WriteTo writes file content into io.Writer.
-func (f *File) WriteTo(w io.Writer) (int64, error) {
-	return f.WriteToIndent(w, "")
-}
-
-// SaveToIndent writes content to file system with given value indention.
-func (f *File) SaveToIndent(filename, indent string) error {
-	// Note: Because we are truncating with os.Create,
-	// 	so it's safer to save to a temporary file location and rename afte done.
-	tmpPath := filename + "." + strconv.Itoa(time.Now().Nanosecond()) + ".tmp"
-	defer os.Remove(tmpPath)
-
-	fw, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	if _, err = f.WriteToIndent(fw, indent); err != nil {
-		fw.Close()
-		return err
-	}
-	fw.Close()
-
-	// Remove old file and rename the new one.
-	os.Remove(filename)
-	return os.Rename(tmpPath, filename)
-}
-
-// SaveTo writes content to file system.
-func (f *File) SaveTo(filename string) error {
-	return f.SaveToIndent(filename, "")
 }

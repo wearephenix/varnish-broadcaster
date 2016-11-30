@@ -122,7 +122,7 @@ Born = nil
 Cities = 
 `
 
-func Test_Struct(t *testing.T) {
+func TestStruct(t *testing.T) {
 	Convey("Map to struct", t, func() {
 		Convey("Map file to struct", func() {
 			ts := new(testStruct)
@@ -307,7 +307,7 @@ type testMapper struct {
 	PackageName string
 }
 
-func Test_NameGetter(t *testing.T) {
+func TestNameGetter(t *testing.T) {
 	Convey("Test name mappers", t, func() {
 		So(MapToWithMapper(&testMapper{}, TitleUnderscore, []byte("packag_name=ini")), ShouldBeNil)
 
