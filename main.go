@@ -168,7 +168,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	var jobs = make([]*Job, cacheCount)
 
 	for idx, bc := range broadcastCaches {
-		bc.Method = "PURGE" //r.Method
+		bc.Method = r.Method
 		bc.Item = r.URL.Path
 		bc.Headers = r.Header
 
