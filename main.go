@@ -29,10 +29,24 @@ var (
 
 	commandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port        = commandLine.Int("port", 8088, "Broadcaster port.")
-	grCount     = commandLine.Int("goroutines", 2, "Goroutines number. Higher is not implicitly better!")
+	grCount     = commandLine.Int("goroutines", 8, "Goroutines number. Higher is not implicitly better!")
 	reqRetries  = commandLine.Int("retries", 1, "Request retry times if first time fails.")
 	caches      = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
+
+	jobChannel = make(chan *Job, 2<<12)
 )
+
+type Job struct {
+	Cache  dao.Cache
+	Result chan []byte
+}
+
+func NewJob(cache dao.Cache) *Job {
+	job := Job{}
+	job.Cache = cache
+	job.Result = make(chan []byte, 1)
+	return &job
+}
 
 func getRequestString(cache dao.Cache) string {
 	var reqBuffer = bytes.Buffer{}
@@ -94,17 +108,17 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	return out, nil
 }
 
-func worker(jobs <-chan dao.Cache, results chan<- []byte) {
-	for j := range jobs {
+func jobWorker(jobs <-chan *Job) {
+	for job := range jobs {
 		var out []byte
 		var err error
 
 		for i := 0; i <= *reqRetries; i++ {
-			out, err = doRequest(j)
+			out, err = doRequest(job.Cache)
 			if err == nil {
 				break
 			} else {
-				err = warmUpConnections(j)
+				err = warmUpConnections(job.Cache)
 				if err != nil {
 					break
 				}
@@ -112,10 +126,10 @@ func worker(jobs <-chan dao.Cache, results chan<- []byte) {
 		}
 
 		if err != nil {
-			results <- []byte(err.Error())
+			job.Result <- []byte(err.Error())
 			continue
 		}
-		results <- out
+		job.Result <- out
 	}
 }
 
@@ -151,29 +165,23 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs := make(chan dao.Cache, cacheCount)
-	results := make(chan []byte, cacheCount)
+	var jobs = make([]*Job, cacheCount)
 
-	for i := 0; i < (*grCount); i++ {
-		go worker(jobs, results)
-	}
-
-	for _, bc := range broadcastCaches {
-		bc.Method = r.Method
+	for idx, bc := range broadcastCaches {
+		bc.Method = "PURGE" //r.Method
 		bc.Item = r.URL.Path
 		bc.Headers = r.Header
-		jobs <- bc
+
+		job := NewJob(bc)
+		jobs[idx] = job
+		jobChannel <- job
 	}
 
-	close(jobs)
-
-	for _, ch := range broadcastCaches {
-		buffer.WriteString(ch.Name)
+	for _, job := range jobs {
+		buffer.WriteString(job.Cache.Name)
 		buffer.WriteString(": ")
-		buffer.Write(<-results)
+		buffer.Write(<-job.Result)
 	}
-
-	close(results)
 
 	fmt.Fprint(w, buffer.String())
 }
@@ -271,6 +279,10 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "* Cache [%s] encountered an error when warming up connections.\n    - %s\n", cache.Name, err.Error())
 		}
+	}
+
+	for i := 0; i < (*grCount); i++ {
+		go jobWorker(jobChannel)
 	}
 
 	startBroadcastServer()
