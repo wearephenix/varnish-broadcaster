@@ -21,8 +21,9 @@ Start the app with any of the following command line args:
 Required headers:
 
    - **X-Group**: Name of the group to broadcast against. Use ***all*** to broadcast against all caches.
-   
-Usage example:
+
+
+## Examples:
 
 Purge **/something/to/purge** in all caches within the ``[default]`` group:
 ```
