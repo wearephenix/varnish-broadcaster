@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
 )
@@ -33,11 +34,12 @@ var (
 	groups    = make(map[string]dao.Group)
 	pools     = make(map[string]pool.Pool)
 
-	commandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	port        = commandLine.Int("port", 8088, "Broadcaster port.")
-	grCount     = commandLine.Int("goroutines", 8, "Goroutines number. Higher is not implicitly better!")
-	reqRetries  = commandLine.Int("retries", 1, "Request retry times if first time fails.")
-	caches      = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
+	commandLine   = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	port          = commandLine.Int("port", 8088, "Broadcaster port.")
+	grCount       = commandLine.Int("goroutines", 8, "Goroutines number. Higher is not implicitly better!")
+	reqRetries    = commandLine.Int("retries", 1, "Request retry times if first time fails.")
+	caches        = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
+	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code to the first encountered non-200 value.")
 
 	jobChannel = make(chan *Job, 2<<12)
 )
@@ -189,12 +191,26 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		jobChannel <- job
 	}
 
+	var statusCode = http.StatusOK
+	var err error
+
 	for _, job := range jobs {
+		result := <-job.Result
+
 		buffer.WriteString(job.Cache.Name)
 		buffer.WriteString(": ")
-		buffer.Write(<-job.Result)
+
+		if *enforceStatus && statusCode == http.StatusOK {
+			statusCode, err = strconv.Atoi(strings.Fields(string(result))[1])
+			if err != nil {
+				statusCode = http.StatusInternalServerError
+			}
+		}
+
+		buffer.Write(result)
 	}
 
+	w.WriteHeader(statusCode)
 	w.Write(buffer.Bytes())
 }
 
