@@ -19,6 +19,12 @@ import (
 	"github.com/mariusmagureanu/broadcaster/pool"
 )
 
+const (
+	_NEW_LINE             = "\n"
+	_CUSTOM_HEADER_PREFIX = "x-"
+	_PROTOCOL_VERSION     = " HTTP/1.1\r\nHost: "
+)
+
 var (
 	locker    sync.RWMutex
 	allCaches []dao.Cache
@@ -54,19 +60,19 @@ func getRequestString(cache dao.Cache) string {
 	reqBuffer.WriteString(cache.Method)
 	reqBuffer.WriteRune(' ')
 	reqBuffer.WriteString(cache.Item)
-	reqBuffer.WriteString(" HTTP/1.1\r\nHost: ")
+	reqBuffer.WriteString(_PROTOCOL_VERSION)
 	reqBuffer.WriteString(cache.Address)
-	reqBuffer.WriteString("\n")
+	reqBuffer.WriteString(_NEW_LINE)
 
 	for k, v := range cache.Headers {
-		if strings.HasPrefix(k, "X-") {
+		if strings.HasPrefix(strings.ToLower(k), _CUSTOM_HEADER_PREFIX) {
 			reqBuffer.WriteString(k)
 			reqBuffer.WriteString(": ")
 			reqBuffer.WriteString(v[0])
-			reqBuffer.WriteString("\n")
+			reqBuffer.WriteString(_NEW_LINE)
 		}
 	}
-	reqBuffer.WriteString("\n")
+	reqBuffer.WriteString(_NEW_LINE)
 
 	return reqBuffer.String()
 }
@@ -78,7 +84,7 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	locker.Unlock()
 
 	if connPool == nil {
-		return nil, errors.New("No pools for " + cache.Name)
+		return nil, errors.New("No connection pool available for " + cache.Name)
 	}
 
 	tcpConnection, err := connPool.Get()
@@ -98,6 +104,7 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 		connPool.Close()
 		return nil, err
 	}
+
 	var reader = bufio.NewReader(tcpConnection)
 	out, err := reader.ReadBytes('\n')
 
@@ -141,7 +148,12 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		broadcastCaches []dao.Cache
 	)
 
-	groupName = r.Header.Get("X-Group")
+	for k, v := range r.Header {
+		if strings.ToLower(k) == "x-group" {
+			groupName = v[0]
+			break
+		}
+	}
 
 	switch groupName {
 	case "":
@@ -183,7 +195,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		buffer.Write(<-job.Result)
 	}
 
-	fmt.Fprint(w, buffer.String())
+	w.Write(buffer.Bytes())
 }
 
 func startBroadcastServer() {
