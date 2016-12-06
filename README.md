@@ -17,6 +17,7 @@ Start the app with any of the following command line args:
   - **goroutines**: Sets the number of available goroutines which will handle the broadcast against the caches. Defaults to a number of **8**, a higher number does not necesarilly imply a better performance. Can be tweaked though depending on the number of caches.
   - **caches**: Path to an .ini file containing configured caches. If none specified it defaults to ```/etc/broadcaster/caches.ini```
   - **retries**: Number of items to retry if a request fails to execute. Defaults to 1.
+  - **enforce**: If true, the response code will be set according to the first non-200 received from the Varnish nodes.
   
 Required headers:
 
@@ -40,17 +41,18 @@ Purge everything in all your caches:
 curl -is http://localhost:8088/ -H "X-Group: all"  -X PURGE
 ```
 
-Response example:
+Output sample:
 ```
 HTTP/1.1 200 OK
-Date: Sat, 29 Oct 2016 15:20:19 GMT
-Content-Length: 28
-Content-Type: text/plain; charset=utf-8
+Content-Type: application/json
+Date: Tue, 06 Dec 2016 11:03:07 GMT
+Content-Length: 164
 
-Cache#1: HTTP/1.1 200
-Cache#3: HTTP/1.1 200
-Cache#4: HTTP/1.1 200
-Cache#2: HTTP/1.0 501
+{
+  "Cache11": 200,
+  "Cache12": 200,
+  "Cache13": 501
+}
 ```
 
 Note that your VCL needs to be aware of your purging/banning intentions. See [here](https://www.varnish-cache.org/docs/trunk/users-guide/purging.html) for more cache invalidation details.
