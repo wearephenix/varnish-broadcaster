@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
 )
@@ -45,6 +46,7 @@ var (
 
 type Job struct {
 	Cache  dao.Cache
+	Status int
 	Result chan []byte
 }
 
@@ -144,9 +146,11 @@ func jobWorker(jobs <-chan *Job) {
 func reqHandler(w http.ResponseWriter, r *http.Request) {
 
 	var (
-		buffer          bytes.Buffer
+		err             error
 		groupName       string
 		broadcastCaches []dao.Cache
+		statusCode      = http.StatusOK
+		respBody        = make(map[string]int)
 	)
 
 	for k, v := range r.Header {
@@ -190,27 +194,26 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		jobChannel <- job
 	}
 
-	var statusCode = http.StatusOK
-	var err error
-
 	for _, job := range jobs {
 		result := <-job.Result
+		job.Status, err = strconv.Atoi(strings.Fields(string(result))[1])
 
-		buffer.WriteString(job.Cache.Name)
-		buffer.WriteString(": ")
-
-		if *enforceStatus && statusCode == http.StatusOK {
-			statusCode, err = strconv.Atoi(strings.Fields(string(result))[1])
-			if err != nil {
-				statusCode = http.StatusInternalServerError
-			}
+		if err != nil {
+			job.Status = http.StatusInternalServerError
 		}
 
-		buffer.Write(result)
+		if *enforceStatus && statusCode == http.StatusOK {
+			statusCode = job.Status
+		}
+
+		respBody[job.Cache.Name] = job.Status
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	w.Write(buffer.Bytes())
+
+	out, _ := json.MarshalIndent(respBody, "", "  ")
+	w.Write(out)
 }
 
 func startBroadcastServer() {
