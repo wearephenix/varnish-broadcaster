@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"encoding/json"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
 )
