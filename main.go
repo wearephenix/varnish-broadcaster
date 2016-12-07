@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
+	"hash/fnv"
+	"os/signal"
 )
 
 const (
@@ -40,8 +42,15 @@ var (
 	reqRetries    = commandLine.Int("retries", 1, "Request retry times if first time fails.")
 	caches        = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
 	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code to the first encountered non-200 value.")
+	enableLog     = commandLine.Bool("enableLog", false, "Switch logging on/off. By default logging is disabled.")
+	logFilePath   = commandLine.String("log-file", "/var/log/broadcaster.log", "Log file path.")
 
 	jobChannel = make(chan *Job, 2<<12)
+	logChannel = make(chan []string, 2<<12)
+	sigChannel = make(chan os.Signal, 1)
+
+	logBuffer bytes.Buffer
+	logFile   *os.File
 )
 
 type Job struct {
@@ -50,11 +59,63 @@ type Job struct {
 	Result chan []byte
 }
 
-func NewJob(cache dao.Cache) *Job {
+func newJob(cache dao.Cache) *Job {
 	job := Job{}
 	job.Cache = cache
 	job.Result = make(chan []byte, 1)
 	return &job
+}
+
+func hash(s string) string {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return fmt.Sprintf("%v", h.Sum32())
+}
+
+func sendToLogChannel(args ...string) {
+	logChannel <- args
+}
+
+func notifySigChannel() {
+	signal.Notify(sigChannel, os.Interrupt, os.Kill)
+
+	go func() {
+		<-sigChannel
+		if *enableLog {
+			if logFile != nil {
+				logFile.Close()
+			}
+		}
+
+		fmt.Println("Broadcaster exited succesfully.")
+		os.Exit(0)
+	}()
+}
+
+func startLog() error {
+	if *logFilePath != "" {
+		var logFileErr error
+		logFile, logFileErr = os.OpenFile(*logFilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+
+		if logFileErr != nil {
+			return logFileErr
+		}
+
+		go func() {
+			for logEntry := range logChannel {
+				logBuffer.Reset()
+				logBuffer.WriteString(time.Now().Format(time.RFC3339))
+				logBuffer.WriteString(" ")
+
+				for _, logString := range logEntry {
+					logBuffer.WriteString(logString)
+				}
+
+				logFile.WriteString(logBuffer.String())
+			}
+		}()
+	}
+	return nil
 }
 
 func getRequestString(cache dao.Cache) string {
@@ -100,8 +161,8 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 
 	defer tcpConnection.Close()
 
-	purgeReq := getRequestString(cache)
-	_, err = tcpConnection.Write([]byte(purgeReq))
+	reqString := getRequestString(cache)
+	_, err = tcpConnection.Write([]byte(reqString))
 
 	if err != nil {
 		connPool.Close()
@@ -148,6 +209,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	var (
 		err             error
 		groupName       string
+		reqId           string
 		broadcastCaches []dao.Cache
 		statusCode      = http.StatusOK
 		respBody        = make(map[string]int)
@@ -189,14 +251,20 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		bc.Item = r.URL.Path
 		bc.Headers = r.Header
 
-		job := NewJob(bc)
+		job := newJob(bc)
 		jobs[idx] = job
 		jobChannel <- job
 	}
 
+	if *enableLog {
+		reqId = hash(hash(time.Now().String()))
+	}
+
 	for _, job := range jobs {
 		result := <-job.Result
-		job.Status, err = strconv.Atoi(strings.Fields(string(result))[1])
+		resAsString := string(result)
+
+		job.Status, err = strconv.Atoi(strings.Fields(resAsString)[1])
 
 		if err != nil {
 			job.Status = http.StatusInternalServerError
@@ -207,6 +275,10 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		respBody[job.Cache.Name] = job.Status
+
+		if *enableLog {
+			sendToLogChannel(reqId, " ", r.Method, " ", job.Cache.Address, r.URL.Path, " ", resAsString)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -292,6 +364,7 @@ func main() {
 
 	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
 
+	fmt.Println("Loading caches configuration.")
 	err = setUpCaches()
 	if err != nil {
 		fmt.Println(err.Error())
@@ -303,6 +376,20 @@ func main() {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
+
+	if *enableLog {
+		err = startLog()
+		if err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, "Logging to %s\n", *logFilePath)
+		defer logFile.Close()
+	}
+
+	notifySigChannel()
+
+	fmt.Println("Warming up connections.")
 
 	for _, cache := range allCaches {
 		err = warmUpConnections(cache)
