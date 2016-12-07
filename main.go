@@ -76,6 +76,8 @@ func sendToLogChannel(args ...string) {
 	logChannel <- args
 }
 
+// notifySigChannel waits for an Interrupt or Kill signal
+// and gracefully handles it.
 func notifySigChannel() {
 	signal.Notify(sigChannel, os.Interrupt, os.Kill)
 
@@ -92,6 +94,8 @@ func notifySigChannel() {
 	}()
 }
 
+// startLog initializes and starts a goroutine that's going
+// to listen the logChannel and write any entries that come along.
 func startLog() error {
 	if *logFilePath != "" {
 		var logFileErr error
@@ -118,6 +122,8 @@ func startLog() error {
 	return nil
 }
 
+// getRequestString generates a http compliant request
+// for a given cache.
 func getRequestString(cache dao.Cache) string {
 	var reqBuffer = bytes.Buffer{}
 
@@ -141,6 +147,9 @@ func getRequestString(cache dao.Cache) string {
 	return reqBuffer.String()
 }
 
+// doRequest retrieves an available connection from the pool
+// and writes into it. If succesfull, the connection is sent back to
+// the pool, otherwise - for any error - the pool is closed.
 func doRequest(cache dao.Cache) ([]byte, error) {
 
 	locker.Lock()
@@ -179,6 +188,8 @@ func doRequest(cache dao.Cache) ([]byte, error) {
 	return out, nil
 }
 
+// jobWorker listens on the jobs channel and handles
+// any incoming job.
 func jobWorker(jobs <-chan *Job) {
 	for job := range jobs {
 		var out []byte
@@ -204,6 +215,8 @@ func jobWorker(jobs <-chan *Job) {
 	}
 }
 
+// reqHandler handles any incoming http request. Its main purpose
+// is to distribute the request further to all required caches.
 func reqHandler(w http.ResponseWriter, r *http.Request) {
 
 	var (
@@ -294,6 +307,9 @@ func startBroadcastServer() {
 	fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
+// setUpCaches reads the configured caches from the .ini file
+// and populates a map having group name as key and slice of caches
+// as values.
 func setUpCaches() error {
 	groupList, err := dao.LoadCachesFromIni(*caches)
 
@@ -303,6 +319,9 @@ func setUpCaches() error {
 	return err
 }
 
+// resolveCacheTcpAddresses iterates the configured caches and tries
+// to resolve their addresses, if succesfull - a map with cache names and
+// their resolved addresses is populated.
 func resolveCacheTcpAddresses() error {
 	var err error
 	for _, group := range groups {
@@ -321,6 +340,8 @@ func resolveCacheTcpAddresses() error {
 	return err
 }
 
+// warmpUpConnections creates a pool of 10 connections
+// for the specified cache.
 func warmUpConnections(cache dao.Cache) error {
 
 	locker.Lock()
