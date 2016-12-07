@@ -3,23 +3,23 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"encoding/json"
 	"github.com/mariusmagureanu/broadcaster/dao"
 	"github.com/mariusmagureanu/broadcaster/pool"
-	"hash/fnv"
-	"os/signal"
 )
 
 const (
@@ -38,12 +38,12 @@ var (
 
 	commandLine   = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port          = commandLine.Int("port", 8088, "Broadcaster port.")
-	grCount       = commandLine.Int("goroutines", 8, "Goroutines number. Higher is not implicitly better!")
-	reqRetries    = commandLine.Int("retries", 1, "Request retry times if first time fails.")
+	grCount       = commandLine.Int("goroutines", 8, "Job handling goroutines pool. Higher is not implicitly better!")
+	reqRetries    = commandLine.Int("retries", 1, "Request retry times against a cache - should the first attempt fail.")
 	caches        = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
-	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code to the first encountered non-200 value.")
-	enableLog     = commandLine.Bool("enableLog", false, "Switch logging on/off. By default logging is disabled.")
 	logFilePath   = commandLine.String("log-file", "/var/log/broadcaster.log", "Log file path.")
+	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code of a request to be the first encountered non-200 received from a cache. Disabled by default.")
+	enableLog     = commandLine.Bool("enable-log", false, "Switches logging on/off. Disabled by default.")
 
 	jobChannel = make(chan *Job, 2<<12)
 	logChannel = make(chan []string, 2<<12)
