@@ -355,11 +355,11 @@ func warmUpConnections(cache dao.Cache) error {
 			return nil, err
 		}
 		tcpConn.SetKeepAlive(true)
-		tcpConn.SetKeepAlivePeriod(1 * time.Minute)
+		tcpConn.SetKeepAlivePeriod(5 * time.Minute)
 		return tcpConn, err
 	}
 
-	p, err := pool.NewChannelPool(10, 40, factory)
+	p, err := pool.NewChannelPool(10, 50, factory)
 
 	if err != nil {
 		return err
