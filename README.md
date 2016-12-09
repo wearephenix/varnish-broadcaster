@@ -18,6 +18,8 @@ Start the app with any of the following command line args:
   - **caches**: Path to an .ini file containing configured caches. If none specified it defaults to ```/etc/broadcaster/caches.ini```
   - **retries**: Number of items to retry if a request fails to execute. Defaults to 1.
   - **enforce**: If true, the response code will be set according to the first non-200 received from the Varnish nodes.
+  - **log-file**: Path to a log file. If none specified it defaults to ```/var/log/broadcaster.log```
+  - **enable-log**: Switches logging on/off. Disabled by default.
   
 Required headers:
 
