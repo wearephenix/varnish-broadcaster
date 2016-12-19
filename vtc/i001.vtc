@@ -1,0 +1,33 @@
+varnishtest "Verify simple get requests."
+
+server s1 {
+    rxreq
+    expect req.url == "/index"
+    txresp
+
+    rxreq
+    expect req.url == "/home"
+    txresp
+
+    rxreq
+    expect req.url == "/"
+    txresp
+
+} -start
+
+varnish v1 -arg "-a :6081" -vcl+backend {
+    sub vcl_recv {
+        if (req.method == "PURGE") {
+            return(purge);
+        }
+    }
+} -start
+
+delay 1
+
+client c1 -connect 127.0.0.1:8088 {
+    txreq -url "/index" -hdr "x-group: default"
+    rxresp
+
+    expect resp.status == 200
+} -run
