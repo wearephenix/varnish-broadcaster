@@ -1,46 +1,46 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"hash/fnv"
+	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"errors"
 
 	"github.com/mariusmagureanu/broadcaster/dao"
-	"github.com/mariusmagureanu/broadcaster/pool"
 )
 
 const (
-	_NEW_LINE             = "\n"
-	_CUSTOM_HEADER_PREFIX = "x-"
-	_PROTOCOL_VERSION     = " HTTP/1.1\r\nHost: "
+	maxIdleConnections int = 100
+	requestTimeout     int = 5
 )
 
 var (
 	locker    sync.RWMutex
 	allCaches []dao.Cache
 
-	addresses = make(map[string]*net.TCPAddr)
-	groups    = make(map[string]dao.Group)
-	pools     = make(map[string]pool.Pool)
+	groups  = make(map[string]dao.Group)
+	clients = make(map[string]*http.Client)
 
 	commandLine   = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port          = commandLine.Int("port", 8088, "Broadcaster port.")
 	grCount       = commandLine.Int("goroutines", 8, "Job handling goroutines pool. Higher is not implicitly better!")
 	reqRetries    = commandLine.Int("retries", 1, "Request retry times against a cache - should the first attempt fail.")
-	caches        = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
+	cachesCfgFile = commandLine.String("caches", "/etc/broadcaster/caches.ini", "Path to the default caches configuration file.")
 	logFilePath   = commandLine.String("log-file", "/var/log/broadcaster.log", "Log file path.")
 	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code of a request to be the first encountered non-200 received from a cache. Disabled by default.")
 	enableLog     = commandLine.Bool("enable-log", false, "Switches logging on/off. Disabled by default.")
@@ -48,14 +48,38 @@ var (
 	jobChannel = make(chan *Job, 2<<12)
 	logChannel = make(chan []string, 2<<12)
 	sigChannel = make(chan os.Signal, 1)
+	hupChannel = make(chan os.Signal, 1)
 
 	logBuffer bytes.Buffer
 	logFile   *os.File
+
+	defaultLocalAddr = net.IPAddr{IP: net.IPv4zero}
 )
+
+func createHTTPClient() *http.Client {
+	d := &net.Dialer{
+		LocalAddr: &net.TCPAddr{IP: defaultLocalAddr.IP, Zone: defaultLocalAddr.Zone},
+		KeepAlive: 2 * time.Minute,
+		Timeout:   30 * time.Second,
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DisableCompression:  true,
+			Proxy:               http.ProxyFromEnvironment,
+			MaxIdleConnsPerHost: maxIdleConnections,
+			DisableKeepAlives:   false,
+			Dial:                d.Dial,
+		},
+		Timeout: time.Duration(requestTimeout) * time.Second,
+	}
+
+	return client
+}
 
 type Job struct {
 	Cache  dao.Cache
-	Status int
+	Status chan int
 	Result chan []byte
 }
 
@@ -63,6 +87,7 @@ func newJob(cache dao.Cache) *Job {
 	job := Job{}
 	job.Cache = cache
 	job.Result = make(chan []byte, 1)
+	job.Status = make(chan int, 1)
 	return &job
 }
 
@@ -73,7 +98,37 @@ func hash(s string) string {
 }
 
 func sendToLogChannel(args ...string) {
-	logChannel <- args
+	if *enableLog {
+		logChannel <- args
+	}
+}
+
+// notifySigHup spawns a goroutine which will keep
+// "listening" for hang-up signals. When such a signal
+// occurs the configuration is reloaded from disk.
+func notifySigHup() {
+	signal.Notify(hupChannel, syscall.SIGHUP)
+
+	go func() {
+		for range hupChannel {
+			sendToLogChannel("Sighup notification, reloading configuration.\n")
+
+			err := readConfiguredCaches()
+			if err != nil {
+				fmt.Println(err.Error())
+				os.Exit(1)
+			}
+
+			sendToLogChannel("Warming up connections.\n")
+
+			err = setUpHttpClients()
+
+			if err != nil {
+				fmt.Println(err.Error())
+				os.Exit(1)
+			}
+		}
+	}()
 }
 
 // notifySigChannel waits for an Interrupt or Kill signal
@@ -81,17 +136,17 @@ func sendToLogChannel(args ...string) {
 func notifySigChannel() {
 	signal.Notify(sigChannel, os.Interrupt, os.Kill)
 
-	go func() {
+	go func(f *os.File) {
 		<-sigChannel
 		if *enableLog {
-			if logFile != nil {
-				logFile.Close()
+			if f != nil {
+				f.Close()
 			}
 		}
 
 		fmt.Println("Broadcaster exited succesfully.")
 		os.Exit(0)
-	}()
+	}(logFile)
 }
 
 // startLog initializes and starts a goroutine that's going
@@ -105,7 +160,7 @@ func startLog() error {
 			return logFileErr
 		}
 
-		go func() {
+		go func(f *os.File) {
 			for logEntry := range logChannel {
 				logBuffer.Reset()
 				logBuffer.WriteString(time.Now().Format(time.RFC3339))
@@ -115,84 +170,48 @@ func startLog() error {
 					logBuffer.WriteString(logString)
 				}
 
-				logFile.WriteString(logBuffer.String())
+				f.WriteString(logBuffer.String())
 			}
-		}()
+		}(logFile)
 	}
 	return nil
 }
 
-// getRequestString generates a http compliant request
-// for a given cache.
-func getRequestString(cache dao.Cache) string {
-	var reqBuffer = bytes.Buffer{}
-
-	reqBuffer.WriteString(cache.Method)
-	reqBuffer.WriteRune(' ')
-	reqBuffer.WriteString(cache.Item)
-	reqBuffer.WriteString(_PROTOCOL_VERSION)
-	reqBuffer.WriteString(cache.Address)
-	reqBuffer.WriteString(_NEW_LINE)
-
-	for k, v := range cache.Headers {
-		if strings.HasPrefix(strings.ToLower(k), _CUSTOM_HEADER_PREFIX) {
-			reqBuffer.WriteString(k)
-			reqBuffer.WriteString(": ")
-			reqBuffer.WriteString(v[0])
-			reqBuffer.WriteString(_NEW_LINE)
-		}
-	}
-	reqBuffer.WriteString(_NEW_LINE)
-
-	return reqBuffer.String()
-}
-
-// doRequest retrieves an available connection from the pool
-// and writes into it. If succesfull, the connection is sent back to
-// the pool, otherwise - for any error - the pool is closed.
-func doRequest(cache dao.Cache) ([]byte, error) {
-
+func doRequest(cache dao.Cache) (int, error) {
 	locker.Lock()
-	var connPool = pools[cache.Name]
+	client := clients[cache.Name]
 	locker.Unlock()
 
-	if connPool == nil {
-		return nil, errors.New("No connection pool available for " + cache.Name)
-	}
-
-	tcpConnection, err := connPool.Get()
+	reqString := cache.Address + cache.Item
+	r, err := http.NewRequest(cache.Method, reqString, nil)
 
 	if err != nil {
-
-		connPool.Close()
-		return nil, err
+		return http.StatusInternalServerError, err
 	}
 
-	defer tcpConnection.Close()
-
-	reqString := getRequestString(cache)
-	_, err = tcpConnection.Write([]byte(reqString))
+	resp, err := client.Do(r)
 
 	if err != nil {
-		connPool.Close()
-		return nil, err
+		return http.StatusInternalServerError, err
 	}
 
-	var reader = bufio.NewReader(tcpConnection)
-	out, err := reader.ReadBytes('\n')
+	_, err = io.Copy(ioutil.Discard, resp.Body)
 
 	if err != nil {
-		connPool.Close()
-		return nil, err
+		return http.StatusInternalServerError, err
 	}
-	return out, nil
+
+	resp.Body.Close()
+
+	return resp.StatusCode, err
+
 }
 
 // jobWorker listens on the jobs channel and handles
 // any incoming job.
 func jobWorker(jobs <-chan *Job) {
 	for job := range jobs {
-		var out []byte
+		var out int
 		var err error
 
 		for i := 0; i <= *reqRetries; i++ {
@@ -200,7 +219,8 @@ func jobWorker(jobs <-chan *Job) {
 			if err == nil {
 				break
 			} else {
-				err = warmUpConnections(job.Cache)
+				// TODO: still need to decide what to do here.
+				err = warmUpHttpClient(job.Cache)
 				if err != nil {
 					break
 				}
@@ -211,7 +231,7 @@ func jobWorker(jobs <-chan *Job) {
 			job.Result <- []byte(err.Error())
 			continue
 		}
-		job.Result <- out
+		job.Status <- out
 	}
 }
 
@@ -220,7 +240,6 @@ func jobWorker(jobs <-chan *Job) {
 func reqHandler(w http.ResponseWriter, r *http.Request) {
 
 	var (
-		err             error
 		groupName       string
 		reqId           string
 		broadcastCaches []dao.Cache
@@ -235,14 +254,9 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	switch groupName {
-	case "":
-		http.Error(w, "Missing group name.", http.StatusBadRequest)
-		return
-	case "all":
+	if groupName == "" {
 		broadcastCaches = allCaches
-		break
-	default:
+	} else {
 		if _, found := groups[groupName]; !found {
 			http.Error(w, "Group not found.", http.StatusNotFound)
 			return
@@ -274,24 +288,13 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, job := range jobs {
-		result := <-job.Result
-		resAsString := string(result)
-
-		job.Status, err = strconv.Atoi(strings.Fields(resAsString)[1])
-
-		if err != nil {
-			job.Status = http.StatusInternalServerError
-		}
 
 		if *enforceStatus && statusCode == http.StatusOK {
-			statusCode = job.Status
+			statusCode = <-job.Status
 		}
 
-		respBody[job.Cache.Name] = job.Status
-
-		if *enableLog {
-			sendToLogChannel(reqId, " ", r.Method, " ", job.Cache.Address, r.URL.Path, " ", resAsString)
-		}
+		respBody[job.Cache.Name] = <-job.Status
+		sendToLogChannel(reqId, " ", r.Method, " ", job.Cache.Address, r.URL.Path, " ", "\n")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -310,68 +313,51 @@ func startBroadcastServer() {
 // setUpCaches reads the configured caches from the .ini file
 // and populates a map having group name as key and slice of caches
 // as values.
-func setUpCaches() error {
-	groupList, err := dao.LoadCachesFromIni(*caches)
+func readConfiguredCaches() error {
+	groupList, err := dao.LoadCachesFromIni(*cachesCfgFile)
 
 	for _, g := range groupList {
 		groups[g.Name] = g
-	}
-	return err
-}
 
-// resolveCacheTcpAddresses iterates the configured caches and tries
-// to resolve their addresses, if succesfull - a map with cache names and
-// their resolved addresses is populated.
-func resolveCacheTcpAddresses() error {
-	var err error
-	for _, group := range groups {
-		for _, cache := range group.Caches {
-
-			cacheTcpAddress, err := net.ResolveTCPAddr("tcp4", cache.Address)
+		for _, cache := range g.Caches {
+			_, err = url.Parse(cache.Address)
 
 			if err != nil {
 				return err
 			}
 
-			addresses[cache.Name] = cacheTcpAddress
 			allCaches = append(allCaches, cache)
 		}
 	}
+
 	return err
 }
 
-// warmpUpConnections creates a pool of 10 connections
-// for the specified cache.
-func warmUpConnections(cache dao.Cache) error {
-
+func warmUpHttpClient(cache dao.Cache) error {
 	locker.Lock()
+	client := createHTTPClient()
+
+	clients[cache.Name] = client
 	defer locker.Unlock()
 
-	cacheTcpAddress := addresses[cache.Name]
+	return nil
+}
 
-	factory := func() (net.Conn, error) {
-		tcpConn, err := net.DialTCP("tcp", nil, cacheTcpAddress)
+func setUpHttpClients() error {
+
+	for _, cache := range allCaches {
+		err := warmUpHttpClient(cache)
 		if err != nil {
-			return nil, err
+			return errors.New(fmt.Sprintf( "* Cache [%s] encountered an error when warming up connections.\n    - %s\n", cache.Name, err.Error()))
 		}
-		tcpConn.SetKeepAlive(true)
-		tcpConn.SetKeepAlivePeriod(5 * time.Minute)
-		return tcpConn, err
 	}
-
-	p, err := pool.NewChannelPool(10, 50, factory)
-
-	if err != nil {
-		return err
-	}
-
-	pools[cache.Name] = p
-
 	return nil
 }
 
 func main() {
 	var err error
+
+	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
 
 	commandLine.Usage = func() {
 		fmt.Fprint(os.Stdout, "Usage of the broadcaster:\n")
@@ -379,21 +365,6 @@ func main() {
 	}
 
 	if err := commandLine.Parse(os.Args[1:]); err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
-
-	fmt.Println("Loading caches configuration.")
-	err = setUpCaches()
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	err = resolveCacheTcpAddresses()
-	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
@@ -408,16 +379,25 @@ func main() {
 		defer logFile.Close()
 	}
 
-	notifySigChannel()
+	fmt.Println("Loading caches configuration.")
+
+	err = readConfiguredCaches()
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
 
 	fmt.Println("Warming up connections.")
 
-	for _, cache := range allCaches {
-		err = warmUpConnections(cache)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "* Cache [%s] encountered an error when warming up connections.\n    - %s\n", cache.Name, err.Error())
-		}
+	err = setUpHttpClients()
+
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
 	}
+
+	notifySigHup()
+	notifySigChannel()
 
 	for i := 0; i < (*grCount); i++ {
 		go jobWorker(jobChannel)
