@@ -13,7 +13,7 @@ See [this](caches.ini) file as an example on how to configure your caches.
 
 Start the app with any of the following command line args:
 
-  - **port**: The port under which the broadcaster is exposed. Defaults to **8088**
+  - **port**: The port under which the broadcaster is exposed. Defaults to **8088**.
   - **goroutines**: Sets the number of available goroutines which will handle the broadcast against the caches. Defaults to a number of **8**, a higher number does not necesarilly imply a better performance. Can be tweaked though depending on the number of caches.
   - **cfg**: Path to an .ini file containing configured caches. This is a *required* parameter.
   - **retries**: Number of items to retry if a request fails to execute. Defaults to 1.
@@ -25,7 +25,7 @@ Start the app with any of the following command line args:
 
   By default, the broadcaster starts listening on the http port, however - if both ``crt`` and ``key`` options are set, it will automatically switch onto https.
   
-  - **https-port**: Broadcaster https listening port. If none specified it defaults to **8443**
+  - **https-port**: Broadcaster https listening port. If none specified it defaults to **8443**.
   - **crt**: CRT file used for HTTPS support.
   - **key**: KEY file used for HTTPS support.
 
