@@ -15,16 +15,27 @@ Start the app with any of the following command line args:
 
   - **port**: The port under which the broadcaster is exposed. Defaults to **8088**
   - **goroutines**: Sets the number of available goroutines which will handle the broadcast against the caches. Defaults to a number of **8**, a higher number does not necesarilly imply a better performance. Can be tweaked though depending on the number of caches.
-  - **caches**: Path to an .ini file containing configured caches. If none specified it defaults to ```/etc/broadcaster/caches.ini```
+  - **cfg**: Path to an .ini file containing configured caches. This is a *required* parameter.
   - **retries**: Number of items to retry if a request fails to execute. Defaults to 1.
   - **enforce**: If true, the response code will be set according to the first non-200 received from the Varnish nodes.
-  - **log-file**: Path to a log file. If none specified it defaults to ```/var/log/broadcaster.log```
+  - **log-file**: Path to a log file. If none specified it defaults to ```stdout```.
   - **enable-log**: Switches logging on/off. Disabled by default.
+
+HTTPS support.
+
+  By default, the broadcaster starts listening on the http port, however - if both ``crt`` and ``key`` options are set, it will automatically switch onto https.
   
-Required headers:
+  - **https-port**: Broadcaster https listening port. If none specified it defaults to **8443**
+  - **crt**: CRT file used for HTTPS support.
+  - **key**: KEY file used for HTTPS support.
 
-   - **X-Group**: Name of the group to broadcast against. Use ***all*** to broadcast against all caches.
+Optional headers.
 
+   - **X-Group**: Name of the group to broadcast against, if not used - the broadcast will be done against all caches.
+
+Configuration reload.
+
+   If the broadcaster receives a ``SIGHUP`` notification, it will trigger a configuration reload from disk.
 
 ## Examples:
 
@@ -40,7 +51,12 @@ curl -is http://localhost:8088/foo -H "X-Group: prod"  -X BAN
 
 Purge everything in all your caches:
 ```
-curl -is http://localhost:8088/ -H "X-Group: all"  -X PURGE
+curl -is http://localhost:8088/ -X PURGE
+```
+
+Purge everything in all your caches over https:
+```
+curl -is https://localhost:8443/ -X PURGE --cacert server.crt
 ```
 
 Output sample:
