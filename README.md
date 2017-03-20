@@ -21,7 +21,7 @@ Start the app with any of the following command line args:
   - **log-file**: Path to a log file. If none specified it defaults to ```stdout```.
   - **enable-log**: Switches logging on/off. Disabled by default.
 
-HTTPS support.
+#### HTTPS support.
 
   By default, the broadcaster starts listening on the http port, however - if both ``crt`` and ``key`` options are set, it will automatically switch onto https.
   
@@ -29,11 +29,11 @@ HTTPS support.
   - **crt**: CRT file used for HTTPS support.
   - **key**: KEY file used for HTTPS support.
 
-Optional headers.
+#### Optional headers.
 
    - **X-Group**: Name of the group to broadcast against, if not used - the broadcast will be done against all caches.
 
-Configuration reload.
+#### Configuration reload.
 
    If the broadcaster receives a ``SIGHUP`` notification, it will trigger a configuration reload from disk.
 
