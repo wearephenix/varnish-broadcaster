@@ -42,7 +42,7 @@ var (
 	grCount       = commandLine.Int("goroutines", 8, "Job handling goroutines pool. Higher is not implicitly better!")
 	reqRetries    = commandLine.Int("retries", 1, "Request retry times against a cache - should the first attempt fail.")
 	cachesCfgFile = commandLine.String("cfg", "", "Path pointing to the caches configuration file.")
-	logFilePath   = commandLine.String("log-file", "/var/log/broadcaster.log", "Log file path.")
+	logFilePath   = commandLine.String("log-file", "", "Log file path.")
 	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code of a request to be the first encountered non-200 received from a cache. Disabled by default.")
 	enableLog     = commandLine.Bool("enable-log", false, "Switches logging on/off. Disabled by default.")
 	crtFile       = commandLine.String("crt", "", "CRT file used for HTTPS support.")
@@ -155,28 +155,32 @@ func notifySigChannel() {
 // startLog initializes and starts a goroutine that's going
 // to listen the logChannel and write any entries that come along.
 func startLog() error {
+
+	var logWriter io.WriteCloser = os.Stdout
+
 	if *logFilePath != "" {
 		var logFileErr error
-		logFile, logFileErr = os.OpenFile(*logFilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		logWriter, logFileErr = os.OpenFile(*logFilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 
 		if logFileErr != nil {
 			return logFileErr
 		}
-
-		go func(f *os.File) {
-			for logEntry := range logChannel {
-				logBuffer.Reset()
-				logBuffer.WriteString(time.Now().Format(time.RFC3339))
-				logBuffer.WriteString(" ")
-
-				for _, logString := range logEntry {
-					logBuffer.WriteString(logString)
-				}
-
-				f.WriteString(logBuffer.String())
-			}
-		}(logFile)
 	}
+
+	go func(f io.WriteCloser) {
+		for logEntry := range logChannel {
+			logBuffer.Reset()
+			logBuffer.WriteString(time.Now().Format(time.RFC3339))
+			logBuffer.WriteString(" ")
+
+			for _, logString := range logEntry {
+				logBuffer.WriteString(logString)
+			}
+
+			io.WriteString(f, logBuffer.String())
+		}
+	}(logWriter)
+
 	return nil
 }
 
@@ -246,7 +250,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 		groupName       string
 		reqId           string
 		broadcastCaches []dao.Cache
-		statusCode      = http.StatusOK
+		reqStatusCode   = http.StatusOK
 		respBody        = make(map[string]int)
 	)
 
@@ -260,11 +264,14 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	if groupName == "" {
 		broadcastCaches = allCaches
 	} else {
+		locker.Lock()
 		if _, found := groups[groupName]; !found {
 			http.Error(w, "Group not found.", http.StatusNotFound)
+			locker.Unlock()
 			return
 		}
 		broadcastCaches = groups[groupName].Caches
+		locker.Unlock()
 	}
 
 	var cacheCount = len(broadcastCaches)
@@ -292,16 +299,18 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 
 	for _, job := range jobs {
 
-		if *enforceStatus && statusCode == http.StatusOK {
-			statusCode = <-job.Status
+		jobStatusCode := <-job.Status
+
+		if *enforceStatus && reqStatusCode == http.StatusOK {
+			reqStatusCode = jobStatusCode
 		}
 
-		respBody[job.Cache.Name] = <-job.Status
+		respBody[job.Cache.Name] = jobStatusCode
 		sendToLogChannel(reqId, " ", r.Method, " ", job.Cache.Address, r.URL.Path, " ", "\n")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
+	w.WriteHeader(reqStatusCode)
 
 	out, _ := json.MarshalIndent(respBody, "", "  ")
 	w.Write(out)
@@ -337,6 +346,8 @@ func startBroadcastServer() {
 // and populates a map having group name as key and slice of caches
 // as values.
 func readConfiguredCaches() error {
+	locker.Lock()
+	defer locker.Unlock()
 	groupList, err := dao.LoadCachesFromIni(*cachesCfgFile)
 
 	for _, g := range groupList {
@@ -398,11 +409,11 @@ func main() {
 			fmt.Println(err.Error())
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stdout, "Logging to %s\n", *logFilePath)
+
 		defer logFile.Close()
 	}
 
-	fmt.Println("Loading caches configuration.")
+	fmt.Println("Loading configuration.")
 
 	err = readConfiguredCaches()
 	if err != nil {
