@@ -266,7 +266,9 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		locker.Lock()
 		if _, found := groups[groupName]; !found {
-			http.Error(w, "Group not found.", http.StatusNotFound)
+			var errText = fmt.Sprintf("Group %s not found.", groupName)
+			sendToLogChannel(errText)
+			http.Error(w, errText, http.StatusNotFound)
 			locker.Unlock()
 			return
 		}
