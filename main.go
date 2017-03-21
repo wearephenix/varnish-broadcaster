@@ -277,6 +277,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	var cacheCount = len(broadcastCaches)
 
 	if cacheCount == 0 {
+		sendToLogChannel("Group ", groupName, " has no configured caches.")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -348,6 +349,7 @@ func startBroadcastServer() {
 func readConfiguredCaches() error {
 	locker.Lock()
 	defer locker.Unlock()
+
 	groupList, err := dao.LoadCachesFromIni(*cachesCfgFile)
 
 	for _, g := range groupList {
@@ -411,6 +413,11 @@ func main() {
 		}
 
 		defer logFile.Close()
+	}
+
+	if *cachesCfgFile == "" {
+		fmt.Println("No configuration file specified. Use the -cfg parameter to specify one.")
+		os.Exit(1)
 	}
 
 	fmt.Println("Loading configuration.")
