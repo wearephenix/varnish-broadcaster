@@ -38,15 +38,12 @@ var (
 
 	commandLine   = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	port          = commandLine.Int("port", 8088, "Broadcaster port.")
-	httpsPort     = commandLine.Int("https-port", 8443, "Broadcaster https port.")
 	grCount       = commandLine.Int("goroutines", 8, "Job handling goroutines pool. Higher is not implicitly better!")
 	reqRetries    = commandLine.Int("retries", 1, "Request retry times against a cache - should the first attempt fail.")
-	cachesCfgFile = commandLine.String("cfg", "", "Path pointing to the caches configuration file.")
+	cachesCfgFile = commandLine.String("cfg", "/caches.ini", "Path pointing to the caches configuration file.")
 	logFilePath   = commandLine.String("log-file", "", "Log file path.")
 	enforceStatus = commandLine.Bool("enforce", false, "Enforces the status code of a request to be the first encountered non-200 received from a cache. Disabled by default.")
 	enableLog     = commandLine.Bool("enable-log", false, "Switches logging on/off. Disabled by default.")
-	crtFile       = commandLine.String("crt", "", "CRT file used for HTTPS support.")
-	keyFile       = commandLine.String("key", "", "KEY file used for HTTPS support.")
 
 	jobChannel = make(chan *Job, 2<<12)
 	logChannel = make(chan []string, 2<<12)
@@ -322,27 +319,8 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 func startBroadcastServer() {
 	http.HandleFunc("/", reqHandler)
 
-	if *crtFile != "" && *keyFile != "" {
-
-		_, err := os.Stat(*crtFile)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		_, err = os.Stat(*keyFile)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...\n", strconv.Itoa(*httpsPort))
-		fmt.Println(http.ListenAndServeTLS(":"+strconv.Itoa(*httpsPort), *crtFile, *keyFile, nil))
-
-	} else {
-		fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...\n", strconv.Itoa(*port))
-		fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
-
-	}
+	fmt.Fprintf(os.Stdout, "Broadcaster serving on %s...\n", strconv.Itoa(*port))
+	fmt.Println(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
 // setUpCaches reads the configured caches from the .ini file
