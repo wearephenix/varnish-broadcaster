@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mariusmagureanu/broadcaster/dao"
+	dao "github.com/wearephenix/varnish-broadcaster/dao"
 )
 
 const (

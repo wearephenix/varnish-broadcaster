@@ -2,10 +2,11 @@ package dao
 
 import (
 	"encoding/json"
-	"github.com/mariusmagureanu/broadcaster/ini"
 	"io/ioutil"
 	"net/http"
 	"os"
+
+	ini "github.com/wearephenix/varnish-broadcaster/ini"
 )
 
 type Cache struct {
