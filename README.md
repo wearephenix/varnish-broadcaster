@@ -2,8 +2,6 @@
 
 Small tool that broadast requests to multiple [Varnish](https://www.varnish-cache.org/) server. Useful to purge/ban cache on a Varnish cluster with just one HTTP request.
 
-Fork from [@gquintard](https://github.com/gquintard/broadcaster).
-
 ## Build
 
 Produce a build in `dist/varnish-broadcaster` :
@@ -53,3 +51,7 @@ Purge `/something/to/purge` in all caches within the `prod` group:
 ```shell
 curl -X PURGE -H "X-Group: prod" http://localhost:8088/something/to/purge
 ```
+
+## Credits
+
+Project initially developed by [Marius Magureanu](https://github.com/mariusmagureanu), then maintained by [Guillaume Quintard](https://github.com/gquintard/broadcaster). Few commits are also inspired by [Timothy Clarke's fork](https://github.com/timothyclarke/http-request-broadcaster).
