@@ -338,6 +338,10 @@ func startBroadcastServer() {
 // and populates a map having group name as key and slice of caches
 // as values.
 func readConfiguredCaches() error {
+	var (
+		newCaches []dao.Cache
+	)
+
 	locker.Lock()
 	defer locker.Unlock()
 
@@ -353,9 +357,11 @@ func readConfiguredCaches() error {
 				return err
 			}
 
-			allCaches = append(allCaches, cache)
+			newCaches = append(newCaches, cache)
 		}
 	}
+	// Replace cache list by the new one
+	allCaches = newCaches
 
 	return err
 }
