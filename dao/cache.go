@@ -10,11 +10,12 @@ import (
 )
 
 type Cache struct {
-	Name    string      `json:"name"`
-	Address string      `json:"address"`
-	Method  string      `json:"-"`
-	Item    string      `json:"-"`
-	Headers http.Header `json:"-"`
+	Name       string      `json:"name"`
+	Address    string      `json:"address"`
+	Method     string      `json:"-"`
+	Item       string      `json:"-"`
+	Parameters string      `json:"-"`
+	Headers    http.Header `json:"-"`
 }
 
 type Group struct {

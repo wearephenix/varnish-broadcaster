@@ -188,6 +188,7 @@ func doRequest(cache dao.Cache) (int, error) {
 
 	reqString := cache.Address + cache.Item
 	r, err := http.NewRequest(cache.Method, reqString, nil)
+	r.URL.RawQuery = cache.Parameters
 
 	// Preserve the headers
 	for k, v := range cache.Headers {
@@ -294,6 +295,7 @@ func reqHandler(w http.ResponseWriter, r *http.Request) {
 	for idx, bc := range broadcastCaches {
 		bc.Method = r.Method
 		bc.Item = r.URL.Path
+		bc.Parameters = r.URL.RawQuery
 		bc.Headers = r.Header
 		if len(r.Host) != 0 {
 			bc.Headers.Add("Host", r.Host)
